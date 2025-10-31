@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Panel</title>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
+</head>
+<body>
+    <div style="padding: 20px; font-family: Arial;">
+        <h2>Admin Panel - Add User</h2>
+        
+        <div style="margin-bottom: 20px;">
+            <input type="email" id="email" placeholder="Email" style="padding: 10px; width: 300px; margin: 5px;"><br>
+            <input type="password" id="password" placeholder="Password" style="padding: 10px; width: 300px; margin: 5px;"><br>
+            <input type="text" id="validity" placeholder="hr-24 or day-30" style="padding: 10px; width: 300px; margin: 5px;"><br>
+            <button onclick="addUser()" style="padding: 10px 20px; margin: 5px;">Add User</button>
+        </div>
+
+        <div id="message" style="color: red; margin: 10px 0;"></div>
+
+        <h3>Current Users:</h3>
+        <div id="usersList"></div>
+
+        <div style="margin-top: 20px;">
+            <button onclick="logout()" style="padding: 10px 20px;">Logout</button>
+        </div>
+    </div>
+
+    <script>
+        // Firebase config
+        const firebaseConfig = {
+            apiKey: "AIzaSyCy0DVL0yomS3269ZYjVSUm-NZA2vXkcPs",
+            authDomain: "levelup-ee512.firebaseapp.com",
+            databaseURL: "https://levelup-ee512-default-rtdb.firebaseio.com",
+            projectId: "levelup-ee512",
+            storageBucket: "levelup-ee512.firebasestorage.app",
+            messagingSenderId: "875691337745",
+            appId: "1:875691337745:web:dfa21728a0f5e80df469b0",
+            measurementId: "G-2REVGLVP1E"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const database = firebase.database();
+
+        // Check if user is logged in
+        auth.onAuthStateChanged(user => {
+            if (!user) {
+                // Show login form
+                showLoginForm();
+            } else {
+                // User is logged in, load users
+                loadUsers();
+            }
+        });
+
+        function showLoginForm() {
+            document.body.innerHTML = `
+                <div style="padding: 50px; text-align: center; font-family: Arial;">
+                    <h2>Admin Login</h2>
+                    <input type="email" id="loginEmail" placeholder="Email" style="padding: 10px; margin: 5px;"><br>
+                    <input type="password" id="loginPassword" placeholder="Password" style="padding: 10px; margin: 5px;"><br>
+                    <button onclick="login()" style="padding: 10px 20px; margin: 5px;">Login</button>
+                    <div id="loginMessage" style="color: red; margin: 10px;"></div>
+                </div>
+            `;
+        }
+
+        function login() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            auth.signInWithEmailAndPassword(email, password)
+                .then(() => {
+                    // Login successful
+                    location.reload();
+                })
+                .catch(error => {
+                    document.getElementById('loginMessage').textContent = error.message;
+                });
+        }
+
+        function logout() {
+            auth.signOut();
+        }
+
+        async function addUser() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const validity = document.getElementById('validity').value;
+            const messageDiv = document.getElementById('message');
+
+            // Clear message
+            messageDiv.textContent = '';
+            messageDiv.style.color = 'red';
+
+            if (!email || !password || !validity) {
+                messageDiv.textContent = 'Please fill all fields';
+                return;
+            }
+
+            if (!validity.match(/^(hr-\d+|day-\d+)$/)) {
+                messageDiv.textContent = 'Use format: hr-24 or day-30';
+                return;
+            }
+
+            try {
+                // Create user in Firebase Auth
+                const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                const user = userCredential.user;
+
+                // Calculate expiry date
+                const parts = validity.split('-');
+                const type = parts[0];
+                const value = parseInt(parts[1]);
+                
+                const validUntil = new Date();
+                if (type === 'hr') {
+                    validUntil.setHours(validUntil.getHours() + value);
+                } else {
+                    validUntil.setDate(validUntil.getDate() + value);
+                }
+
+                // Save to database
+                await database.ref('userAccess/' + user.uid).set({
+                    email: email,
+                    validUntil: validUntil.toISOString(),
+                    createdAt: new Date().toISOString(),
+                    validity: validity
+                });
+
+                // Success
+                messageDiv.style.color = 'green';
+                messageDiv.textContent = 'User added successfully!';
+
+                // Clear form
+                document.getElementById('email').value = '';
+                document.getElementById('password').value = '';
+                document.getElementById('validity').value = '';
+
+                // Reload users list
+                loadUsers();
+
+            } catch (error) {
+                messageDiv.textContent = 'Error: ' + error.message;
+            }
+        }
+
+        function loadUsers() {
+            database.ref('userAccess').on('value', snapshot => {
+                const usersList = document.getElementById('usersList');
+                usersList.innerHTML = '';
+
+                if (!snapshot.exists()) {
+                    usersList.innerHTML = '<p>No users found</p>';
+                    return;
+                }
+
+                const users = snapshot.val();
+                let html = '<table border="1" style="width: 100%; border-collapse: collapse;">';
+                html += '<tr><th>Email</th><th>Valid Until</th><th>Status</th><th>Action</th></tr>';
+
+                for (const userId in users) {
+                    const user = users[userId];
+                    const validUntil = new Date(user.validUntil);
+                    const now = new Date();
+                    const status = validUntil > now ? 'Active' : 'Expired';
+                    const color = validUntil > now ? 'green' : 'red';
+
+                    html += `
+                        <tr>
+                            <td>${user.email}</td>
+                            <td>${validUntil.toLocaleString()}</td>
+                            <td style="color: ${color}">${status}</td>
+                            <td><button onclick="deleteUser('${userId}')">Delete</button></td>
+                        </tr>
+                    `;
+                }
+
+                html += '</table>';
+                usersList.innerHTML = html;
+            });
+        }
+
+        function deleteUser(userId) {
+            if (confirm('Delete this user?')) {
+                database.ref('userAccess/' + userId).remove()
+                    .then(() => {
+                        alert('User deleted');
+                    })
+                    .catch(error => {
+                        alert('Error: ' + error.message);
+                    });
+            }
+        }
+    </script>
+</body>
+</html>
